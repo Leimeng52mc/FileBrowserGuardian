@@ -2,6 +2,10 @@
 
 FileBrowserGuardian 是一个 Windows 托盘守护程序，用来管理 `filebrowser.exe` 的启动、停止、重启和开机自启。
 
+## License
+
+MIT
+
 ## 功能
 
 - 托盘菜单控制 `filebrowser.exe`
