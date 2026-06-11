@@ -3,7 +3,9 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,17 +19,23 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+var version = "dev"
+
 // ---------- 配置结构 ----------
 type Config struct {
 	FileBrowserExe  string `json:"filebrowser_exe"`
 	FileBrowserArgs string `json:"filebrowser_args"`
 	LogFile         string `json:"log_file"`
+	AutoRestart     bool   `json:"auto_restart"`
+	MaxLogSize      int64  `json:"max_log_size_mb"`
 }
 
 var defaultConfig = Config{
 	FileBrowserExe:  "filebrowser.exe",
 	FileBrowserArgs: "-a 0.0.0.0 -p 8080",
 	LogFile:         "filebrowser.log",
+	AutoRestart:     true,
+	MaxLogSize:      10,
 }
 
 const (
@@ -40,10 +48,12 @@ const (
 var iconData []byte
 
 var (
-	cmdMutex  sync.Mutex
-	cmd       *exec.Cmd
-	isRunning bool
+	cmdMutex    sync.Mutex
+	cmd         *exec.Cmd
+	isRunning   bool
+	runningLock sync.RWMutex
 
+	configLock    sync.RWMutex
 	currentConfig Config
 
 	mStatus    *systray.MenuItem
@@ -53,6 +63,11 @@ var (
 	mEditConf  *systray.MenuItem
 	mOpenPage  *systray.MenuItem
 	mAutoStart *systray.MenuItem
+
+	addrRe = regexp.MustCompile(`-a\s+(\S+)`)
+	portRe = regexp.MustCompile(`-p\s+(\S+)`)
+
+	stopDone chan struct{}
 )
 
 func main() {
@@ -65,20 +80,24 @@ func main() {
 func loadConfig() {
 	cfgPath := resolvePath(configFile)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		saveConfig(defaultConfig)
-		currentConfig = defaultConfig
+		if err := saveConfig(defaultConfig); err != nil {
+			log.Printf("创建默认配置失败: %v", err)
+		}
+		setConfig(defaultConfig)
 		return
 	}
 
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		currentConfig = defaultConfig
+		log.Printf("读取配置失败: %v", err)
+		setConfig(defaultConfig)
 		return
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		currentConfig = defaultConfig
+		log.Printf("解析配置失败: %v", err)
+		setConfig(defaultConfig)
 		return
 	}
 
@@ -91,14 +110,35 @@ func loadConfig() {
 	if cfg.LogFile == "" {
 		cfg.LogFile = defaultConfig.LogFile
 	}
+	if cfg.MaxLogSize <= 0 {
+		cfg.MaxLogSize = defaultConfig.MaxLogSize
+	}
 
-	currentConfig = cfg
+	setConfig(cfg)
 }
 
-func saveConfig(cfg Config) {
-	data, _ := json.MarshalIndent(cfg, "", "  ")
+func saveConfig(cfg Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化配置失败: %w", err)
+	}
 	cfgPath := resolvePath(configFile)
-	os.WriteFile(cfgPath, data, 0644)
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		return fmt.Errorf("写入配置失败: %w", err)
+	}
+	return nil
+}
+
+func getConfig() Config {
+	configLock.RLock()
+	defer configLock.RUnlock()
+	return currentConfig
+}
+
+func setConfig(cfg Config) {
+	configLock.Lock()
+	defer configLock.Unlock()
+	currentConfig = cfg
 }
 
 func reloadConfigAndRestart() {
@@ -108,22 +148,18 @@ func reloadConfigAndRestart() {
 
 // ---------- 地址解析 ----------
 func getWebURL() string {
-	args := currentConfig.FileBrowserArgs
+	args := getConfig().FileBrowserArgs
 	ip := "localhost"
 	port := "8080"
 
-	// 提取 -a 参数
-	aRe := regexp.MustCompile(`-a\s+(\S+)`)
-	if match := aRe.FindStringSubmatch(args); len(match) == 2 {
+	if match := addrRe.FindStringSubmatch(args); len(match) == 2 {
 		ip = match[1]
 		if ip == "0.0.0.0" {
 			ip = "localhost"
 		}
 	}
 
-	// 提取 -p 参数
-	pRe := regexp.MustCompile(`-p\s+(\S+)`)
-	if match := pRe.FindStringSubmatch(args); len(match) == 2 {
+	if match := portRe.FindStringSubmatch(args); len(match) == 2 {
 		port = match[1]
 	}
 
@@ -131,6 +167,18 @@ func getWebURL() string {
 }
 
 // ---------- 服务控制 ----------
+func getRunning() bool {
+	runningLock.RLock()
+	defer runningLock.RUnlock()
+	return isRunning
+}
+
+func setRunning(v bool) {
+	runningLock.Lock()
+	defer runningLock.Unlock()
+	isRunning = v
+}
+
 func autoStartService() {
 	time.Sleep(500 * time.Millisecond)
 	startFileBrowser()
@@ -144,32 +192,34 @@ func startFileBrowser() bool {
 		return true
 	}
 
-	exePath := resolvePath(currentConfig.FileBrowserExe)
+	cfg := getConfig()
+	exePath := resolvePath(cfg.FileBrowserExe)
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
 		updateStatus("文件未找到: " + exePath)
 		return false
 	}
 
-	logPath := resolvePath(currentConfig.LogFile)
+	logPath := resolvePath(cfg.LogFile)
 	logWriter, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		updateStatus("日志文件打开失败")
 		return false
 	}
 
-	cmd = exec.Command(exePath, strings.Split(currentConfig.FileBrowserArgs, " ")...)
-	// 在可执行文件所在目录启动子进程，确保相对路径和工作目录行为与 filebrowser.exe 本身一致
+	cmd = exec.Command(exePath, strings.Split(cfg.FileBrowserArgs, " ")...)
 	cmd.Dir = filepath.Dir(exePath)
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 
 	if err := cmd.Start(); err != nil {
+		logWriter.Close()
 		updateStatus("启动失败: " + err.Error())
 		return false
 	}
 
 	isRunning = true
+	stopDone = make(chan struct{})
 	updateStatus("服务运行中")
 	refreshMenuTitles()
 
@@ -178,12 +228,19 @@ func startFileBrowser() bool {
 		logWriter.Close()
 		cmdMutex.Lock()
 		isRunning = false
+		close(stopDone)
 		cmdMutex.Unlock()
 		if err != nil {
 			logToFile("filebrowser 退出: " + err.Error())
 		}
 		updateStatus("服务已停止")
 		refreshMenuTitles()
+
+		if cfg.AutoRestart {
+			logToFile("5 秒后自动重启...")
+			time.Sleep(5 * time.Second)
+			startFileBrowser()
+		}
 	}()
 
 	logToFile("filebrowser 启动成功")
@@ -198,19 +255,24 @@ func stopFileBrowser() bool {
 		return true
 	}
 
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		cmd.Process.Kill()
-	}
+	done := stopDone
+
+	cmd.Process.Kill()
 	isRunning = false
 	updateStatus("服务已停止")
 	refreshMenuTitles()
 	logToFile("filebrowser 已停止")
+
+	cmdMutex.Unlock()
+	if done != nil {
+		<-done
+	}
+	cmdMutex.Lock()
 	return true
 }
 
 func restartFileBrowser() {
 	stopFileBrowser()
-	time.Sleep(1 * time.Second)
 	startFileBrowser()
 }
 
@@ -218,7 +280,7 @@ func restartFileBrowser() {
 func onReady() {
 	systray.SetIcon(iconData)
 	systray.SetTitle("FileBrowser")
-	systray.SetTooltip("FileBrowser 守护程序")
+	systray.SetTooltip("FileBrowser 守护程序 v" + version)
 
 	mStatus = systray.AddMenuItem("状态：正在启动...", "")
 	mStatus.Disable()
@@ -245,7 +307,6 @@ func onReady() {
 
 	mQuit := systray.AddMenuItem("退出守护程序", "停止服务并退出托盘")
 
-	// 事件处理
 	go func() {
 		for {
 			select {
@@ -253,7 +314,7 @@ func onReady() {
 				url := getWebURL()
 				exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 			case <-mStartStop.ClickedCh:
-				if isRunning {
+				if getRunning() {
 					stopFileBrowser()
 				} else {
 					startFileBrowser()
@@ -269,7 +330,7 @@ func onReady() {
 				toggleAutoStart()
 				updateAutoStartMenu()
 			case <-mViewLog.ClickedCh:
-				logPath := resolvePath(currentConfig.LogFile)
+				logPath := resolvePath(getConfig().LogFile)
 				exec.Command("notepad.exe", logPath).Start()
 			case <-mQuit.ClickedCh:
 				stopFileBrowser()
@@ -293,11 +354,6 @@ func resolvePath(name string) string {
 	return filepath.Join(dir, name)
 }
 
-// configPath returns the absolute path to config.json resolved relative to the executable.
-func configPath() string {
-	return resolvePath(configFile)
-}
-
 func updateStatus(status string) {
 	if mStatus != nil {
 		mStatus.SetTitle("状态：" + status)
@@ -306,7 +362,7 @@ func updateStatus(status string) {
 
 func refreshMenuTitles() {
 	if mStartStop != nil {
-		if isRunning {
+		if getRunning() {
 			mStartStop.SetTitle("停止服务")
 		} else {
 			mStartStop.SetTitle("启动服务")
@@ -315,13 +371,30 @@ func refreshMenuTitles() {
 }
 
 func logToFile(msg string) {
-	logPath := resolvePath(currentConfig.LogFile)
+	cfg := getConfig()
+	logPath := resolvePath(cfg.LogFile)
+
+	rotateLogIfNeeded(logPath, cfg.MaxLogSize*1024*1024)
+
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 	io.WriteString(f, time.Now().Format("2006-01-02 15:04:05")+" "+msg+"\n")
+}
+
+func rotateLogIfNeeded(path string, maxSize int64) {
+	if maxSize <= 0 {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() < maxSize {
+		return
+	}
+	backup := path + ".old"
+	os.Remove(backup)
+	os.Rename(path, backup)
 }
 
 // ---------- 开机自启（注册表 HKCU） ----------
@@ -341,7 +414,10 @@ func enableAutoStart() error {
 		return err
 	}
 	defer key.Close()
-	exePath, _ := os.Executable()
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("获取可执行文件路径失败: %w", err)
+	}
 	return key.SetStringValue(registryValueName, `"`+exePath+`"`)
 }
 

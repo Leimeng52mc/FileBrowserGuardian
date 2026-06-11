@@ -25,7 +25,7 @@ jobs:
       - name: Build (windows/amd64)
         run: |
           mkdir -p dist
-          go build -ldflags "-s -w" -o dist/FileBrowserGuardian_windows_amd64.exe .
+          go build -ldflags "-s -w -X main.version=dev-${{ github.sha }}" -o dist/FileBrowserGuardian_windows_amd64.exe .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -53,7 +53,7 @@ jobs:
       - name: Build release executable
         run: |
           mkdir -p dist
-          go build -ldflags "-s -w" -o dist/FileBrowserGuardian_windows_amd64.exe .
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/FileBrowserGuardian_windows_amd64.exe .
 
       - name: Create checksum
         run: |

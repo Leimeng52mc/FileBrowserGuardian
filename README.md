@@ -1,5 +1,7 @@
 # FileBrowserGuardian
 
+> Vibe coding 项目 — 由 AI 辅助生成和迭代
+
 FileBrowserGuardian 是一个 Windows 托盘守护程序，用来管理 `filebrowser.exe` 的启动、停止、重启和开机自启。
 
 ## License
@@ -13,6 +15,8 @@ MIT
 - 打开 Web 管理页面
 - 查看日志文件
 - 可选开机自动运行
+- 崩溃后自动重启
+- 日志自动轮转
 
 ## 依赖
 
@@ -28,7 +32,9 @@ MIT
 {
   "filebrowser_exe": "filebrowser.exe",
   "filebrowser_args": "-a 0.0.0.0 -p 8080",
-  "log_file": "filebrowser.log"
+  "log_file": "filebrowser.log",
+  "auto_restart": true,
+  "max_log_size_mb": 10
 }
 ```
 
@@ -41,16 +47,5 @@ go run .
 或者先编译：
 
 ```powershell
-go build -o bin/FileBrowserGuardian.exe .
+go build -ldflags "-s -w -X main.version=dev" -o FileBrowserGuardian.exe .
 ```
-
-## 发布到 GitHub
-
-1. 在本地初始化仓库并提交。
-2. 使用 GitHub CLI 创建远程仓库并推送：
-
-```powershell
-gh repo create FileBrowserGuardian --public --source . --remote origin --push
-```
-
-如果你要私有仓库，把 `--public` 改成 `--private`。
