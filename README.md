@@ -47,5 +47,5 @@ go run .
 或者先编译：
 
 ```powershell
-go build -ldflags "-s -w -X main.version=dev" -o FileBrowserGuardian.exe .
+go build -ldflags "-s -w -H windowsgui -X main.version=dev" -o FileBrowserGuardian.exe .
 ```

@@ -8,7 +8,7 @@ Single-file Go Windows tray application that manages `filebrowser.exe` lifecycle
 
 ```powershell
 go run .                                    # dev run
-go build -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o dist/FileBrowserGuardian_windows_amd64.exe .  # release build (matches CI)
+go build -ldflags "-s -w -H windowsgui -X main.version=$(git describe --tags --always)" -o dist/FileBrowserGuardian_windows_amd64.exe .  # release build
 ```
 
 No tests, linter, or typecheck steps exist.
@@ -24,7 +24,6 @@ No tests, linter, or typecheck steps exist.
 - **Windows-only**: `golang.org/x/sys/windows/registry` and `syscall.SysProcAttr{HideWindow: true}` make this non-portable
 - **No config in repo**: `config.json` is gitignored; generated on first run with defaults
 - **Path resolution**: all paths (exe, config, log) resolve relative to the running executable via `resolvePath()`
-- **CI**: GitHub Actions on `windows-latest`, Go 1.26.3; releases trigger on `v*` tags
 
 ## Dependencies
 
