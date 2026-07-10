@@ -28,6 +28,7 @@ type Config struct {
 	LogFile         string `json:"log_file"`
 	AutoRestart     bool   `json:"auto_restart"`
 	MaxLogSize      int64  `json:"max_log_size_mb"`
+	PreventSleep    bool   `json:"prevent_sleep"`
 }
 
 var defaultConfig = Config{
@@ -36,6 +37,7 @@ var defaultConfig = Config{
 	LogFile:         "filebrowser.log",
 	AutoRestart:     true,
 	MaxLogSize:      10,
+	PreventSleep:    false,
 }
 
 const (
@@ -56,18 +58,29 @@ var (
 	configLock    sync.RWMutex
 	currentConfig Config
 
-	mStatus    *systray.MenuItem
-	mStartStop *systray.MenuItem
-	mRestart   *systray.MenuItem
-	mReload    *systray.MenuItem
-	mEditConf  *systray.MenuItem
-	mOpenPage  *systray.MenuItem
-	mAutoStart *systray.MenuItem
+	mStatus       *systray.MenuItem
+	mStartStop    *systray.MenuItem
+	mRestart      *systray.MenuItem
+	mReload       *systray.MenuItem
+	mEditConf     *systray.MenuItem
+	mOpenPage     *systray.MenuItem
+	mAutoStart    *systray.MenuItem
+	mPreventSleep *systray.MenuItem
 
 	addrRe = regexp.MustCompile(`-a\s+(\S+)`)
 	portRe = regexp.MustCompile(`-p\s+(\S+)`)
 
 	stopDone chan struct{}
+)
+
+var (
+	kernel32               = syscall.NewLazyDLL("kernel32.dll")
+	procSetThreadExecState = kernel32.NewProc("SetThreadExecutionState")
+)
+
+const (
+	esContinuous     = 0x80000000
+	esSystemRequired = 0x00000001
 )
 
 func main() {
@@ -143,6 +156,8 @@ func setConfig(cfg Config) {
 
 func reloadConfigAndRestart() {
 	loadConfig()
+	setPreventSleep(getConfig().PreventSleep)
+	updatePreventSleepMenu()
 	restartFileBrowser()
 }
 
@@ -282,6 +297,9 @@ func onReady() {
 	systray.SetTitle("FileBrowser")
 	systray.SetTooltip("FileBrowser 守护程序 v" + version)
 
+	// 启动时根据配置应用阻止睡眠状态
+	setPreventSleep(getConfig().PreventSleep)
+
 	mStatus = systray.AddMenuItem("状态：正在启动...", "")
 	mStatus.Disable()
 
@@ -300,6 +318,9 @@ func onReady() {
 
 	mAutoStart = systray.AddMenuItem("", "设置是否开机自动运行")
 	updateAutoStartMenu()
+
+	mPreventSleep = systray.AddMenuItem("", "阻止系统进入睡眠状态")
+	updatePreventSleepMenu()
 
 	mViewLog := systray.AddMenuItem("查看日志", "用记事本打开日志")
 
@@ -329,6 +350,13 @@ func onReady() {
 			case <-mAutoStart.ClickedCh:
 				toggleAutoStart()
 				updateAutoStartMenu()
+			case <-mPreventSleep.ClickedCh:
+				cfg := getConfig()
+				cfg.PreventSleep = !cfg.PreventSleep
+				setConfig(cfg)
+				saveConfig(cfg)
+				setPreventSleep(cfg.PreventSleep)
+				updatePreventSleepMenu()
 			case <-mViewLog.ClickedCh:
 				logPath := resolvePath(getConfig().LogFile)
 				exec.Command("notepad.exe", logPath).Start()
@@ -343,6 +371,7 @@ func onReady() {
 
 func onExit() {
 	stopFileBrowser()
+	setPreventSleep(false)
 }
 
 // ---------- 辅助函数 ----------
@@ -447,5 +476,27 @@ func updateAutoStartMenu() {
 			mAutoStart.SetTitle("开机自启：已关闭")
 			mAutoStart.Uncheck()
 		}
+	}
+}
+
+// ---------- 阻止系统睡眠 ----------
+func setPreventSleep(prevent bool) {
+	if prevent {
+		procSetThreadExecState.Call(esContinuous | esSystemRequired)
+	} else {
+		procSetThreadExecState.Call(esContinuous)
+	}
+}
+
+func updatePreventSleepMenu() {
+	if mPreventSleep == nil {
+		return
+	}
+	if getConfig().PreventSleep {
+		mPreventSleep.SetTitle("阻止睡眠：已开启")
+		mPreventSleep.Check()
+	} else {
+		mPreventSleep.SetTitle("阻止睡眠：已关闭")
+		mPreventSleep.Uncheck()
 	}
 }

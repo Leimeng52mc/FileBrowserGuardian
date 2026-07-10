@@ -1,10 +1,19 @@
-# Binaries
+# Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 bin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
 
 # Build outputs
 dist/
@@ -14,11 +23,17 @@ out/
 *.log
 config.json
 
-# Go workspace files
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
 go.work
 go.work.sum
 
-# IDE / editor
+# env file
+.env
+
+# Editor/IDE
 .idea/
 .vscode/
 *.swp
@@ -28,3 +43,11 @@ go.work.sum
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# MiMoCode / AI tooling
+.mimocode/
+
+# Node.js (not part of the Go project)
+package.json
+package-lock.json
+node_modules/

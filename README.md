@@ -17,6 +17,7 @@ MIT
 - 可选开机自动运行
 - 崩溃后自动重启
 - 日志自动轮转
+- 可选阻止系统睡眠
 
 ## 依赖
 
@@ -34,7 +35,8 @@ MIT
   "filebrowser_args": "-a 0.0.0.0 -p 8080",
   "log_file": "filebrowser.log",
   "auto_restart": true,
-  "max_log_size_mb": 10
+  "max_log_size_mb": 10,
+  "prevent_sleep": false
 }
 ```
 
