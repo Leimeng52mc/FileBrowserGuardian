@@ -203,7 +203,7 @@ func startFileBrowser() bool {
 	cmdMutex.Lock()
 	defer cmdMutex.Unlock()
 
-	if isRunning {
+	if getRunning() {
 		return true
 	}
 
@@ -233,7 +233,7 @@ func startFileBrowser() bool {
 		return false
 	}
 
-	isRunning = true
+	setRunning(true)
 	stopDone = make(chan struct{})
 	updateStatus("服务运行中")
 	refreshMenuTitles()
@@ -242,7 +242,7 @@ func startFileBrowser() bool {
 		err := cmd.Wait()
 		logWriter.Close()
 		cmdMutex.Lock()
-		isRunning = false
+		setRunning(false)
 		close(stopDone)
 		cmdMutex.Unlock()
 		if err != nil {
@@ -266,14 +266,14 @@ func stopFileBrowser() bool {
 	cmdMutex.Lock()
 	defer cmdMutex.Unlock()
 
-	if !isRunning || cmd == nil || cmd.Process == nil {
+	if !getRunning() || cmd == nil || cmd.Process == nil {
 		return true
 	}
 
 	done := stopDone
 
 	cmd.Process.Kill()
-	isRunning = false
+	setRunning(false)
 	updateStatus("服务已停止")
 	refreshMenuTitles()
 	logToFile("filebrowser 已停止")
@@ -354,7 +354,9 @@ func onReady() {
 				cfg := getConfig()
 				cfg.PreventSleep = !cfg.PreventSleep
 				setConfig(cfg)
-				saveConfig(cfg)
+				if err := saveConfig(cfg); err != nil {
+					log.Printf("保存配置失败: %v", err)
+				}
 				setPreventSleep(cfg.PreventSleep)
 				updatePreventSleepMenu()
 			case <-mViewLog.ClickedCh:

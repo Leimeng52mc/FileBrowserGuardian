@@ -2,7 +2,7 @@
 
 ## Overview
 
-Single-file Go Windows tray application that manages `filebrowser.exe` lifecycle. Windows-only — uses registry, system tray, and `syscall.SysProcAttr`.
+Single-file Go Windows tray application that manages `filebrowser.exe` lifecycle. Windows-only - uses registry, system tray, and `syscall.SysProcAttr`.
 
 ## Build & Run
 
@@ -15,9 +15,10 @@ No tests, linter, or typecheck steps exist.
 
 ## Architecture
 
-- `main.go` — entire application: config, process management, tray UI, registry autostart
-- `icon.ico` — embedded via `//go:embed` at compile time
-- `config.json` — runtime-generated, gitignored, resolved relative to executable path
+- `main.go` - entire application: config, process management, tray UI, registry autostart
+- `icon.ico` - embedded via `//go:embed` at compile time (tray icon)
+- `rsrc.syso` - Windows resource file compiled from `icon.ico` via `rsrc` tool; gives the `.exe` its file icon. Regenerate with `rsrc -ico icon.ico -o rsrc.syso` after changing the icon.
+- `config.json` - runtime-generated, gitignored, resolved relative to executable path
 
 ## Key Constraints
 
@@ -27,5 +28,5 @@ No tests, linter, or typecheck steps exist.
 
 ## Dependencies
 
-- `github.com/getlantern/systray` — system tray icon and menu
-- `golang.org/x/sys` — Windows registry access for autostart
+- `github.com/getlantern/systray` - system tray icon and menu
+- `golang.org/x/sys` - Windows registry access for autostart
